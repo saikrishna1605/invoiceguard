@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Allow: /privacy
+Allow: /terms
+Disallow: /dashboard
+Disallow: /invoices
+Disallow: /upload
+Disallow: /vendors
+Disallow: /purchase-orders
+
+Sitemap: https://invoiceguard.internal/sitemap.xml

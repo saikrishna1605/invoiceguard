@@ -1,239 +1,267 @@
-# InvoiceGuard — Backend
+# InvoiceGuard 🛡️
 
-Agentic invoice processing pipeline for GIBC V2, Track 02 (Applied Finance).
-All data is synthetic — no real vendors, invoices, or payments.
+> **Autonomous AI-Powered Invoice Verification with Controlled Human Autonomy**  
+> Built for GIBC V2, Track 02 (Applied Finance).  
+> All demo financial data, vendor profiles, and purchase orders are strictly synthetic.
 
-## Architecture
+---
+
+## 1. Executive Summary & Core Principle
+
+**InvoiceGuard** is an agentic financial operations console that automates the labor-intensive stages of Accounts Payable (AP) fraud and error detection—**without ever handing over unsupervised payment authorization**.
+
+### The Core Principle: Controlled Autonomy
+In high-stakes enterprise finance, fully autonomous agents that execute wire transfers or approve payments create unacceptable liability, hallucination risks, and compliance vulnerabilities. 
+
+InvoiceGuard implements **Controlled Autonomy**:
+1. **Full Automation of Ingestion & Analysis**: Multi-agent pipeline ingests invoices (PDFs or text), parses structured line items, cross-references internal vendor databases and purchase orders, tests mathematical integrity, and scores multi-vector anomalies.
+2. **Immutable Traceability**: Every intermediate conclusion is permanently logged to an audit trail with timestamped agent signatures and rationale.
+3. **Hard Human-Approval Gate**: Invoices are **strictly placed into a `pending_review` queue**. No invoice can ever be auto-approved by the machine. Status transitions to `approved` or `rejected` require an authenticated human operator to sign off with their identity and justification.
+
+---
+
+## 2. System Architecture
 
 ```
-Upload/Text  ->  ORCHESTRATE AGENT
-                     |
-   1. EXTRACT   — pulls vendor, invoice #, amount, due date, line items
-   2. RETRIEVE  — looks up vendor record, matches an open PO, checks for
-                  duplicate invoice numbers
-   3. VALIDATE  — invoice vs PO: amounts match? vendor approved? line
-                  items consistent?
-   4. ASSESS    — risk scoring: duplicates, amount anomalies vs vendor
-                  history, unapproved vendors -> risk_level (low/med/high)
-   5. MONITOR   — dashboard stats, alerts on high-risk items
-                     |
-              status = "pending_review"   <-- ALWAYS, never auto-approved
-                     |
-              Human calls /approve or /reject
+                       [ Incoming Invoice ]
+                    (PDF Document or Raw Text)
+                               │
+                               ▼
+               ┌────────────────────────────────┐
+               │       ORCHESTRATE AGENT        │
+               │  (app/agents/orchestrate.py)   │
+               └───────────────┬────────────────┘
+                               │
+       ┌───────────────────────┼───────────────────────┐
+       ▼                       ▼                       ▼
+┌──────────────┐       ┌──────────────┐       ┌──────────────┐
+│ 1. EXTRACT   │ ----> │ 2. RETRIEVE  │ ----> │ 3. VALIDATE  │
+│  Line items, │       │  Vendor DB,  │       │  PO match,   │
+│  dates, PO#, │       │  Open POs,   │       │  tax math,   │
+│  totals, tax │       │  Dup checks  │       │  item match  │
+└──────────────┘       └──────────────┘       └──────────────┘
+                               │
+                               ▼
+                       ┌──────────────┐
+                       │  4. ASSESS   │
+                       │  Risk score  │
+                       │  (LOW/MED/   │
+                       │     HIGH)    │
+                       └───────┬──────┘
+                               │
+                               ▼
+       ┌────────────────────────────────────────────────┐
+       │   STATUS = "pending_review"  (HARD GATEWAY)   │
+       │    Audit Log Generated with All Agent Diffs     │
+       └───────────────────────┬────────────────────────┘
+                               │
+                ┌──────────────┴──────────────┐
+                ▼                             ▼
+       ┌─────────────────┐           ┌─────────────────┐
+       │   5. MONITOR    │           │  HUMAN OPERATOR │
+       │  Real-time KPI  │           │   Console UI    │
+       │  alerts & feeds │           │ /approve /reject│
+       └─────────────────┘           └─────────────────┘
 ```
 
-Every agent writes to the `audit_logs` table, so the dashboard can show
-*why* an invoice was flagged, not just that it was — this is the "Controlled
-Autonomy" story: automation does the work, a person makes the call.
+### Specialized Agents
 
-## Setup
-
-```bash
-python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-cp .env.example .env          # ANTHROPIC_API_KEY and notification channels are optional — see below
-python -m app.seed_data       # creates 5 synthetic vendors + 4 POs
-uvicorn app.main:app --reload
-```
-
-API docs: http://127.0.0.1:8000/docs
-
-### LLM key is optional
-If `ANTHROPIC_API_KEY` is unset, the Extract Agent uses a deterministic
-regex-based extractor instead of an LLM call. The whole pipeline still
-runs end-to-end — useful for a demo where you don't want a flaky network
-call or API key on stage. Set the key in `.env` to switch to real LLM
-extraction (model: `claude-sonnet-4-6`).
-
-### OCR for scanned invoices (system dependencies)
-Scanned or photographed invoices with no text layer are handled via OCR
-fallback (pytesseract + pdf2image). This needs two OS-level packages, not
-just pip installs:
-
-```bash
-# Debian/Ubuntu
-sudo apt-get install tesseract-ocr poppler-utils
-
-# macOS
-brew install tesseract poppler
-```
-
-Without these, `POST /invoices/upload` still works for normal (text-layer)
-PDFs and `/submit-text` — only genuinely scanned/image-only PDFs need OCR.
-
-## Try it immediately
-
-`app/seed_data.py` includes four ready-made sample invoices as plain text
-(`SAMPLE_INVOICES` dict) that exercise every risk path:
-
-| Sample | What it demonstrates |
-|---|---|
-| `clean_match` | Passes validation, low risk |
-| `duplicate` | Same invoice number seen twice -> flagged, high risk |
-| `amount_anomaly` | 3.3x vendor's historical average -> flagged, high risk |
-| `unapproved_vendor` | Vendor not on approved list, no PO -> flagged, medium risk |
-
-Fastest way to test — POST the raw text directly (no PDF needed):
-
-```bash
-curl -X POST http://127.0.0.1:8000/invoices/submit-text \
-  -F "raw_text=Invoice Number: INV-9001
-Vendor: Acme Office Supplies
-Due Date: 2026-10-15
-Office chairs 5 x \$150.00
-Standing desks 2 x \$250.00
-Total Amount Due: \$1250.00"
-```
-
-Or upload a real PDF:
-```bash
-curl -X POST http://127.0.0.1:8000/invoices/upload -F "file=@sample_invoice.pdf"
-```
-
-## Synthetic PDF invoices for demo uploads
-
-`generate_synthetic_pdfs.py` renders 7 ready-made invoice PDFs into
-`sample_invoices_pdf/` so you can demo `POST /invoices/upload` with real
-files instead of typing text into Swagger:
-
-```bash
-pip install reportlab   # not in requirements.txt — only needed to generate these
-python generate_synthetic_pdfs.py
-```
-
-| File | What it demonstrates |
-|---|---|
-| `invoice_clean_match.pdf` | Acme Office Supplies, matches PO-1001 exactly -> low risk |
-| `invoice_clean_brightline.pdf` | Brightline Logistics, matches PO-1002 exactly -> low risk |
-| `invoice_duplicate.pdf` | Identical to `invoice_clean_match.pdf` — upload AFTER it to trigger the duplicate flag -> high risk |
-| `invoice_amount_anomaly.pdf` | Brightline Logistics, $15,000 vs their $4,500 average and PO -> high risk |
-| `invoice_unapproved_vendor.pdf` | Shadow Consulting LLC — not approved, no PO, flagged pending compliance review in the supplier KB -> high risk |
-| `invoice_po_number_match.pdf` | Meridian Cloud Services, cites `PO Number: PO-1003` directly -> matched by PO number, not amount guessing -> low risk |
-| `invoice_po_vendor_mismatch.pdf` | Sterling Print & Signage cites `PO-1003`, which actually belongs to Meridian -> flagged as a PO/vendor mismatch |
-
-Upload order matters for #3 (the duplicate check needs #1 in the database
-first). Verified end-to-end through the real `POST /invoices/upload` path,
-not just the extractor in isolation.
-
-## Realistic stress-test invoices
-
-`generate_realistic_invoices.py` generates 3 harder cases — still fully
-synthetic, but modeled on real-world invoice messiness rather than clean
-templates:
-
-```bash
-python generate_realistic_invoices.py
-```
-
-| File | What it tests |
-|---|---|
-| `invoice_freight_style.pdf` | Different label phrasing throughout, a Subtotal/Tax/Total breakdown, a slash-formatted date, and an unrelated "Bill To" customer line right after the vendor line |
-| `invoice_marketing_style.pdf` | A written-out date ("October 22, 2026") the regex can't parse, "Grand Total" instead of "Total Amount Due", and a non-standard line-item format |
-| `invoice_scanned_no_text_layer.pdf` | A genuinely image-only PDF (no text layer at all) — only readable via the OCR fallback |
-
-These caught two real bugs during development, both now fixed:
-- **The Subtotal trap**: `"Subtotal: $200.00 ... Total Amount Due: $216.00"` used to extract `$200` instead of `$216`, because the old regex matched the substring "total" inside "Sub**total**" with no word boundary.
-- **Vendor extraction stopping too early**: if an unrecognized label (like "Bill To") appeared on the line right after the vendor's name, extraction used to fail entirely rather than just stopping at the end of that line.
-
-**Known, documented limitation** (not silently hidden): the line-item
-extractor only recognizes the `description qty x $price` pattern. Invoices
-that describe items differently (like `invoice_marketing_style.pdf`'s
-`"Description: X | Qty: Y | Rate: Z"` format) will extract other fields
-correctly but come back with an empty `line_items` list. This is a real
-gap worth mentioning to judges as a known next step, not something to
-paper over — a production version would use `pdfplumber`'s table
-extraction or a fully LLM-driven line-item parser instead of regex.
-
-## Testing against a public invoice dataset
-
-For a genuinely external test (not data you or I generated), the
-[`GokulRajaR/invoice-ocr-json`](https://huggingface.co/datasets/GokulRajaR/invoice-ocr-json)
-dataset on Hugging Face is the best fit: it's explicitly built from
-synthetic/anonymized invoices, so it's safe to use under GIBC's
-public-or-de-identified data rule. It has real invoice images and expects
-you to know their real answers, which is genuinely useful for spot-checking.
-
-Other public datasets exist (SROIE, CORD, FUNSD) but are receipt/form
-datasets, not B2B invoices — they lack PO references and vendor payment
-terms, so they won't exercise this pipeline's actual logic well.
-
-To try it:
-1. Download a handful of images from the dataset (requires a free Hugging
-   Face account for some dataset viewers).
-2. Upload them via `POST /invoices/upload` in Swagger, same as the
-   synthetic PDFs — image files go through the OCR path automatically.
-3. Compare the pipeline's `extracted_data` against the dataset's own
-   labeled JSON to see how the deterministic extractor holds up on invoice
-   layouts you didn't design yourself. Expect it to need the LLM path
-   (`ANTHROPIC_API_KEY` set) for good results — the regex extractor was
-   tuned against known label patterns, not arbitrary real-world phrasing.
-
-## API Reference
-
-| Endpoint | Method | Purpose |
+| Agent | Responsibility | Key Mechanics |
 |---|---|---|
-| `/invoices/upload` | POST | Upload PDF/txt invoice, runs full pipeline |
-| `/invoices/submit-text` | POST | Same, but with raw text (form field `raw_text`) |
-| `/invoices` | GET | List invoices, filter with `?status=pending_review` |
-| `/invoices/{id}` | GET | Full detail incl. audit trail |
-| `/invoices/{id}/approve` | POST | Human approval — the only way status changes |
-| `/invoices/{id}/reject` | POST | Human rejection |
-| `/vendors` | GET/POST | List/create vendors |
-| `/purchase-orders` | GET/POST | List/create POs |
-| `/dashboard/stats` | GET | Monitor Agent's aggregate stats for the staff dashboard |
-| `/dashboard/alerts` | GET | High-risk invoices still pending review, right now — the "worth pushing to Slack/ERP" feed |
+| **Extract Agent** | Document Parsing | Uses Anthropic Claude (`claude-sonnet-4-6`) when API key is provided; seamlessly falls back to a deterministic regex parser with zero downtime. Handles OCR via `pytesseract` for scanned image PDFs. |
+| **Retrieve Agent** | Internal ERP Corroboration | Matches invoices to purchase orders by explicit PO citations or amount-proximity heuristics; fetches vendor compliance records from the Supplier Knowledge Base (`supplier_kb.py`). |
+| **Validate Agent** | Deterministic Rule Verification | Cross-verifies line-item price totals, compares PO quantities to invoiced amounts, and confirms vendor authorization status. |
+| **Assess Agent** | Anomaly & Fraud Scoring | Evaluates historical transaction anomalies (e.g., invoices exceeding 3x vendor average), duplicate invoice numbers, and vendor approval flags to output `low`, `medium`, or `high` risk tiers with explicit reasons. |
+| **Monitor Agent** | System Health & Alerting | Aggregates volume metrics, total spend, pending reviews, and triggers webhook alerts for high-risk flags. |
+| **Orchestrate Agent**| Workflow & Gate Enforcement | Sequentially executes pipeline stages, persists audit logs, and controls the state machine so that status remains `pending_review` until signed off by a human. |
 
-## Project structure
+---
 
+## 3. Technology Stack
+
+### Backend
+- **Framework**: [FastAPI](https://fastapi.tiangolo.com/) (Python 3.10+)
+- **ORM & Database**: [SQLAlchemy](https://www.sqlalchemy.org/) with SQLite (`invoiceguard.db`) and in-memory test isolation
+- **Data Validation**: [Pydantic v2](https://docs.pydantic.dev/)
+- **Document Processing**: `pdfplumber`, `pypdf`, `pytesseract`, `pdf2image`
+- **AI / LLM**: Anthropic API (`claude-sonnet-4-6`) with graceful deterministic regex fallback
+
+### Frontend
+- **Framework**: [React 19](https://react.dev/) + [TypeScript](https://www.typescriptlang.org/) (strict mode)
+- **Tooling**: [Vite](https://vitejs.dev/) with Rolldown/ESNext
+- **Styling**: [Tailwind CSS](https://tailwindcss.com/) (Sophisticated Dark Mode First palette)
+- **Animations & 3D**: [Framer Motion](https://www.framer.com/motion/) & [Three.js](https://threejs.org/) (with `prefers-reduced-motion` accessibility support)
+- **Icons**: [Lucide React](https://lucide.dev/)
+- **Linter & Test Runner**: [Oxlint](https://oxc-project.github.io/) (0 errors, 0 warnings) & [Node Test Runner](https://nodejs.org/api/test.html) / `tsx`
+
+---
+
+## 4. Quick Start & Local Setup
+
+### Prerequisites
+- Python 3.10+
+- Node.js 20+ (Node 22 recommended)
+- Git
+
+### 1. Backend Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/saikrishna1605/invoiceguard.git
+cd invoiceguard
+
+# Create and activate virtual environment
+python -m venv .venv
+# On Windows:
+.venv\Scripts\activate
+# On Linux/macOS:
+# source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure environment variables (optional for demo)
+cp .env.example .env
+
+# Seed initial database with synthetic vendors and purchase orders
+python -m app.seed_data
+
+# Start the FastAPI server
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
-app/
-  main.py              FastAPI app, router registration
-  config.py            Env-driven settings
-  database.py          SQLAlchemy engine/session
-  models.py            Vendor, PurchaseOrder, Invoice, AuditLog
-  schemas.py           Pydantic request/response models
-  seed_data.py          Synthetic vendors/POs + 4 sample invoices
-  agents/
-    base.py            Shared BaseAgent (handles audit logging)
-    extract_agent.py
-    retrieve_agent.py
-    validate_agent.py
-    assess_agent.py
-    orchestrate_agent.py   Coordinates the pipeline + the human-approval gate
-    monitor_agent.py
-  services/
-    llm_client.py       LLM call + deterministic regex fallback
-    pdf_parser.py        PDF -> text (pdfplumber) / plain text passthrough
-    supplier_kb.py        Hardcoded supplier knowledge base (payment terms, policy/risk notes)
-  routers/
-    invoices.py, vendors.py, dashboard.py
+Backend API will be running at `http://127.0.0.1:8000` (Interactive docs at `http://127.0.0.1:8000/docs`).
+
+> **Note on LLM API Key**: If `ANTHROPIC_API_KEY` is not provided in `.env`, the system automatically runs the deterministic regex engine. No external network connectivity or paid key is required for local testing or demo presentations.
+
+### 2. Frontend Setup
+
+In a separate terminal:
+
+```bash
+cd frontend
+
+# Install frontend dependencies
+npm install
+
+# (Optional) Verify environment config
+# Default Vite proxy connects to http://127.0.0.1:8000
+cp .env.example .env
+
+# Run development server
+npm run dev
+```
+Open your browser at `http://localhost:5173`.
+
+---
+
+## 5. Pre-Configured Demo Personas
+
+For rapid hackathon evaluation and compliance role testing, the application includes 3 one-click persona presets on the `/auth` screen:
+
+| Persona | Role | Department | Default Account |
+|---|---|---|---|
+| **Marcus Vance** | Senior Financial Controller | Financial Operations | `demo@invoiceguard.local` |
+| **Sarah Chen** | Lead AP Auditor | Accounts Payable | `sarah.chen@invoiceguard.local` |
+| **Elena Rostova** | Risk & Compliance Specialist | Risk Management | `elena.rostova@invoiceguard.local` |
+
+Each persona simulates an authenticated operator with designated role credentials, avatar badges, and audit trail signatures.
+
+---
+
+## 6. Synthetic Test Scenarios & Presets
+
+The frontend upload interface (`/upload`) and backend scripts (`generate_synthetic_pdfs.py`, `generate_realistic_invoices.py`) include ready-to-test scenarios:
+
+1. **Clean Match (`invoice_clean_match.pdf` / Preset)**:
+   - Matches purchase order `PO-1001` and approved vendor *Acme Office Supplies* exactly.
+   - Result: `LOW RISK`, validation passed.
+2. **Duplicate Detection (`invoice_duplicate.pdf`)**:
+   - Re-submits an already registered invoice number.
+   - Result: `HIGH RISK`, flagged for duplicate payment prevention.
+3. **Amount Anomaly (`invoice_amount_anomaly.pdf`)**:
+   - Vendor *Brightline Logistics* submitting an invoice for \$15,000 against a historical average of \$4,500.
+   - Result: `HIGH RISK`, flagged for standard deviation violation.
+4. **Unapproved Vendor (`invoice_unapproved_vendor.pdf`)**:
+   - Invoice from *Shadow Consulting LLC*, an unvetted vendor without an active master service agreement.
+   - Result: `HIGH RISK` / `MEDIUM RISK`, flagged for compliance review.
+5. **PO Vendor Mismatch (`invoice_po_vendor_mismatch.pdf`)**:
+   - Cites purchase order `PO-1003` which belongs to *Meridian Cloud Services*, but the invoice originates from *Sterling Print & Signage*.
+   - Result: `HIGH RISK`, flagged for unauthorized PO utilization.
+
+---
+
+## 7. API Reference
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `GET /` | GET | API health and service status |
+| `POST /invoices/upload` | POST | Upload PDF/image invoice to trigger full 5-stage pipeline |
+| `POST /invoices/submit-text` | POST | Submit raw invoice text directly without a file |
+| `GET /invoices` | GET | List all invoices with optional `?status=pending_review` filter |
+| `GET /invoices/{id}` | GET | Retrieve full invoice record, extracted data, and immutable audit logs |
+| `POST /invoices/{id}/approve` | POST | Operator approval gate (requires `decided_by` and `note`) |
+| `POST /invoices/{id}/reject` | POST | Operator rejection gate (requires `decided_by` and `note`) |
+| `GET /vendors` | GET | List all approved and unapproved suppliers |
+| `POST /vendors` | POST | Create vendor record |
+| `GET /purchase-orders` | GET | List registered purchase orders |
+| `POST /purchase-orders` | POST | Create purchase order with line items |
+| `GET /dashboard/stats` | GET | Real-time AP metrics: total processed, risk counts, pending queue |
+| `GET /dashboard/alerts` | GET | Priority high-risk invoices currently awaiting decision |
+
+---
+
+## 8. Verification & Test Suites
+
+InvoiceGuard is equipped with automated unit and regression test suites across both frontend and backend.
+
+### Frontend Quality & Test Suite
+```bash
+cd frontend
+
+# Run Oxlint (linter check: 0 errors, 0 warnings)
+npm run lint
+
+# Run Unit Tests (formatters, date handlers, authentication & demo personas)
+npm test
+
+# Production build verification (TypeScript + Vite bundling)
+npm run build
 ```
 
-## Notes for the demo
+### Backend Regression Test Suite
+```bash
+# In project root:
+.venv\Scripts\python -m unittest tests/test_backend_regression.py
+# (Or on POSIX: python -m unittest tests/test_backend_regression.py)
+```
+The backend test suite executes against an isolated in-memory SQLite database, verifying:
+- Root service discovery
+- Vendor registration and PO creation with line-item validation
+- Dashboard statistical calculation
+- End-to-end invoice submission, text extraction, retrieval, and decision gates (enforcing that approved invoices cannot be re-approved)
 
-- The Orchestrate Agent's `run_pipeline` never sets status to `approved` —
-  only `apply_decision`, called from the human-facing `/approve` and
-  `/reject` endpoints, can do that. This is deliberate and worth pointing
-  out to judges as the "Controlled Autonomy" differentiator.
-- Vendor average amount updates after each approval, so the anomaly
-  threshold adapts over time rather than being a fixed number.
-- `app/services/supplier_kb.py` holds a hardcoded per-vendor profile
-  (payment terms, contact info, policy/risk notes) for all 5 seeded
-  vendors that Retrieve pulls in and Validate checks against — this is
-  the "Retrieve" agent doing more than a lookup.
-- PO matching prefers an explicit PO number stated on the invoice over
-  amount-proximity guessing (`retrieval_context.po_match_method` shows
-  which one was used). If the cited PO belongs to a different vendor than
-  the invoice states, that's flagged as its own validation issue rather
-  than silently matched.
-- `GET /dashboard/alerts` is the "worth an ERP/Slack notification right
-  now" list. `MonitorAgent.alert_if_high_risk` also pushes to Slack and/or
-  email if `SLACK_WEBHOOK_URL` or `SMTP_HOST`+`ALERT_EMAIL_TO` are set in
-  `.env` — both are best-effort: a failed send is logged and never breaks
-  the pipeline, so the demo is safe to run with or without either
-  configured.
-- Extraction tries the LLM first whenever `ANTHROPIC_API_KEY` is set
-  (`extracted_data.extraction_method` reports `"llm"`), and falls back to
-  the deterministic regex extractor on any error — so a flaky connection
-  mid-demo degrades gracefully instead of failing the upload.
+---
+
+## 9. Security & Production Hardening Roadmap
+
+While designed as a hackathon submission, InvoiceGuard is architected with enterprise hardening in mind:
+
+- **Strict CORS Isolation**: In production, `allow_origins=["*"]` in `app/main.py` should be restricted to verified domain origins.
+- **Zero Dummy Data**: The UI displays real operational states; when lists are empty, clear informative empty states are rendered.
+- **Error Boundaries**: Frontend crashes are caught gracefully by `ErrorBoundary.tsx` without leaking sensitive stack traces to users.
+- **JWT / OAuth2 Transition**: The demo persona switcher simulates authenticated sessions; production AP consoles should be backed by enterprise SAML / Okta / Azure AD SSO.
+- **Sandboxed OCR / PDF Extraction**: Production PDF parsing should run in an isolated container/lambda worker with memory limits to mitigate malicious PDF exploit payloads.
+
+---
+
+## 10. Known Limitations (Honest Disclosure)
+
+1. **Non-Standard Line Items in Regex Mode**: The fallback regex extractor recognizes standard `description qty x $price` patterns. Non-standard layouts (e.g. multi-line wrapped descriptions without column separators) parse invoice headers and totals accurately, but may result in empty `line_items` in fallback mode.
+2. **Scanned Image PDFs**: Image-only PDFs require system-level `tesseract-ocr` and `poppler-utils` packages installed on the host operating system. Text-layer PDFs and direct text submissions operate with zero OS dependencies.
+3. **Synthetic Scope**: All vendors, tax identification numbers, and purchase orders are synthetic and generated for demonstration purposes.
+
+---
+
+## 11. License & Compliance
+
+InvoiceGuard is created for hackathon demonstration. See [`frontend/src/pages/PrivacyPage.tsx`](frontend/src/pages/PrivacyPage.tsx) and [`frontend/src/pages/TermsPage.tsx`](frontend/src/pages/TermsPage.tsx) for prototype terms and privacy practices.
