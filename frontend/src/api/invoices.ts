@@ -16,11 +16,7 @@ export const invoiceApi = {
   async uploadInvoice(file: File): Promise<InvoiceOut> {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await apiClient.post<InvoiceOut>('/invoices/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
+    const res = await apiClient.post<InvoiceOut>('/invoices/upload', formData);
     return res.data;
   },
 

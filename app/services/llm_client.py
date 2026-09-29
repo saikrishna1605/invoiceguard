@@ -38,7 +38,7 @@ FIELD_LABELS = (
 
 AMOUNT_LABEL = (
     r"(?:\btotal\s*amount\s*due\b|\btotal\s*due\b|\bgrand\s*total\b|"
-    r"\bamount\s*due\b|\bbalance\s*due\b|\btotal\b)"
+    r"\bamount\s*due\b|\bbalance\s*due\b|\btotal\b|\bamount\b)"
 )
 
 
