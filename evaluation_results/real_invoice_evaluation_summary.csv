@@ -1,0 +1,2 @@
+historical_years,test_year,historical_records,test_records,known_creditor_records,first_seen_creditor_records,amount_anomalies,amount_anomaly_rate_pct,anomaly_multiplier
+2012-2022,2023,663350,86602,81913,4689,8174,9.4386,2.5
