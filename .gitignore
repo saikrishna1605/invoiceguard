@@ -30,6 +30,12 @@ sample_invoices_pdf/
 hf_comparison_images/
 .system_generated/
 
+# Real empirical invoice dataset - downloaded separately
+data/real_invoices/
+
+# Large evaluation outputs
+evaluation_results/real_invoice_evaluation_2023.csv
+
 # Node & Frontend Build
 node_modules/
 frontend/node_modules/
