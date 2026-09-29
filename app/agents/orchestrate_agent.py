@@ -64,7 +64,7 @@ class OrchestrateAgent(BaseAgent):
         invoice.status = decision
         invoice.decided_by = decided_by
         import datetime as dt
-        invoice.decided_at = dt.datetime.utcnow()
+        invoice.decided_at = dt.datetime.now(dt.UTC).replace(tzinfo=None)
         db.add(invoice)
 
         # Feed approved invoices back into vendor history so future

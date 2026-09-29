@@ -56,7 +56,7 @@ class Invoice(Base):
     status = Column(String, default="pending_review")
     risk_level = Column(String, default="unknown")  # low | medium | high
 
-    created_at = Column(DateTime, default=dt.datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: dt.datetime.now(dt.UTC).replace(tzinfo=None))
     decided_at = Column(DateTime, nullable=True)
     decided_by = Column(String, nullable=True)
 
@@ -73,6 +73,6 @@ class AuditLog(Base):
     agent_name = Column(String, nullable=False)
     action = Column(String, nullable=False)
     detail = Column(JSON, default=dict)
-    timestamp = Column(DateTime, default=dt.datetime.utcnow)
+    timestamp = Column(DateTime, default=lambda: dt.datetime.now(dt.UTC).replace(tzinfo=None))
 
     invoice = relationship("Invoice", back_populates="audit_logs")
