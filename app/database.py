@@ -3,9 +3,36 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 
 from app.config import settings
 
-connect_args = {"check_same_thread": False} if "sqlite" in settings.DATABASE_URL else {}
-engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def normalize_database_url(url: str) -> str:
+    """Normalize hosted PostgreSQL URLs for SQLAlchemy + Psycopg 3."""
+    if url.startswith("postgres://"):
+        return "postgresql+psycopg://" + url[len("postgres://"):]
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://"):]
+    return url
+
+
+database_url = normalize_database_url(settings.DATABASE_URL)
+
+connect_args = (
+    {"check_same_thread": False}
+    if database_url.startswith("sqlite")
+    else {}
+)
+
+engine = create_engine(
+    database_url,
+    connect_args=connect_args,
+    pool_pre_ping=True,
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
 Base = declarative_base()
 
 
