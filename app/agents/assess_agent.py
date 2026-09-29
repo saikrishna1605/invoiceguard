@@ -36,7 +36,14 @@ class AssessAgent(BaseAgent):
             flags.append("Vendor has no history in the system — first-time payee.")
             score += 15
 
-        if not validation.get("passed"):
+        if context.get("po_vendor_mismatch"):
+            flags.append(
+                f"PO vendor mismatch: invoice cites "
+                f"{context.get('matched_po_number')}, but that purchase order "
+                f"belongs to a different vendor."
+            )
+            score += 50
+        elif not validation.get("passed"):
             score += 20 * len(validation.get("issues", []))
             flags.append("Failed one or more PO validation checks.")
 

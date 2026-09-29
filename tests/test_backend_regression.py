@@ -152,5 +152,86 @@ Payment Terms: Net 30
         self.assertEqual(conflict_res.status_code, 400)
 
 
+    def test_po_vendor_mismatch_is_high_risk(self):
+        # Create two different approved vendors.
+        self.client.post(
+            "/vendors",
+            json={"name": "Meridian Test Services", "approved": True},
+        )
+        self.client.post(
+            "/vendors",
+            json={"name": "Sterling Test Signage", "approved": True},
+        )
+
+        # PO belongs to Meridian.
+        po_res = self.client.post(
+            "/purchase-orders",
+            json={
+                "po_number": "PO-MISMATCH-001",
+                "vendor_name": "Meridian Test Services",
+                "amount": 2000.0,
+                "line_items": [
+                    {
+                        "description": "Cloud hosting monthly",
+                        "qty": 1,
+                        "unit_price": 2000.0,
+                    }
+                ],
+            },
+        )
+        self.assertEqual(po_res.status_code, 200)
+
+        # Invoice claims to be from Sterling but explicitly cites
+        # Meridian's purchase order.
+        raw_invoice = """
+Invoice Number: INV-MISMATCH-001
+Vendor: Sterling Test Signage
+PO Number: PO-MISMATCH-001
+Due Date: 2026-10-28
+Cloud hosting monthly 1 x $2000.00
+Total Amount Due: $2000.00
+"""
+
+        submit_res = self.client.post(
+            "/invoices/submit-text",
+            data={"raw_text": raw_invoice},
+        )
+
+        self.assertEqual(submit_res.status_code, 200)
+
+        invoice = submit_res.json()
+
+        # Retrieval must identify the cross-vendor PO reference.
+        self.assertTrue(
+            invoice["retrieval_context"]["po_vendor_mismatch"]
+        )
+        self.assertEqual(
+            invoice["retrieval_context"]["po_match_method"],
+            "po_number",
+        )
+
+        # Validation must reject the vendor/PO relationship.
+        self.assertFalse(invoice["validation_result"]["passed"])
+        self.assertTrue(
+            any(
+                "different vendor" in issue.lower()
+                for issue in invoice["validation_result"]["issues"]
+            )
+        )
+
+        # A cross-vendor PO mismatch is a high-risk event.
+        self.assertEqual(invoice["risk_level"], "high")
+        self.assertGreaterEqual(
+            invoice["assessment_result"]["risk_score"],
+            50,
+        )
+        self.assertTrue(
+            any(
+                "po vendor mismatch" in flag.lower()
+                for flag in invoice["assessment_result"]["flags"]
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
